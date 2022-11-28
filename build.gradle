@@ -139,6 +139,7 @@ allprojects {
         }
     }
 
+
 }
 
 ext {
@@ -153,7 +154,6 @@ ext {
 }
 //Root Module only
 dependencies {
-    if (!OS.isWindows) annotationProcessor "com.github.Anuken:jabel:$jabelVersion"//this thing crash in Windows
     if (androidJarFile.exists())
         compileOnly(files(androidJarFile))
 }
