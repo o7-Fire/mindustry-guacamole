@@ -1,0 +1,375 @@
+import arc.util.OS
+
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+
+buildscript {
+    repositories {//more than you need
+        mavenLocal()
+        mavenCentral()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+        maven { url 'https://jitpack.io' }
+        google()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+
+    dependencies {
+        classpath("com.github.Anuken.Arc:arc-core:$arcHash")//why not
+    }
+
+}
+
+apply plugin: 'java'
+apply plugin: 'java-library'
+
+sourceCompatibility = JavaVersion.VERSION_17
+targetCompatibility = JavaVersion.VERSION_17
+
+
+//github CI don't sort folder by default
+static File getLatestFolder(File fe) {
+    ArrayList<File> f = new ArrayList<>()
+    if (!fe.exists()) throw new FileNotFoundException(fe.getAbsolutePath())
+    File[] files = fe.listFiles()
+    f.addAll(Arrays.asList(files))
+    f.sort(new Comparator<File>() {
+        @Override
+        int compare(File o1, File o2) {
+            return o1.getAbsolutePath() <=> o2.getAbsolutePath()
+        }
+    })
+    return f.get(f.size() - 1)
+}
+
+allprojects {
+    apply plugin: 'java'
+    apply plugin: 'java-library'
+    group = 'org.example'
+    version = modsNversion
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+        maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+        maven { url 'https://jitpack.io' }
+    }
+
+    ext {
+        try {
+            System.properties.load(new FileReader("gradle.properties"))
+            System.properties.load(new FileReader("local.properties"))
+        } catch (ignored) {
+        }
+        //automatically detect latest shit and skipping it if doesn't exists
+        sdkRoot = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+//or just replace it by direct path if you don't need github CI
+        if (sdkRoot == null)
+            sdkRoot = new File("SDK").getAbsolutePath()
+        sdkD8 = sdkRoot + "nope"
+        sdkJar = sdkRoot + "nope"//nopped in case folder didn't exist
+        //redudant ?
+        if (new File(sdkRoot).exists()) {
+            try {
+                //somehow it end .bat
+                String extension = OS.isWindows ? ".bat" : ""
+                sdkD8 = new File(getLatestFolder(new File(sdkRoot, 'build-tools/')), "d8" + extension).getAbsolutePath()
+                sdkJar = new File(getLatestFolder(new File(sdkRoot, "platforms/")), "android.jar").getAbsolutePath()
+            } catch (ignored) {
+                //FileNotFoundException
+            }
+        }
+        if (!new File(sdkJar).exists())//redundant ?
+            sdkJar = new File(sdkRoot, "nope").getAbsolutePath()
+        if (!new File(sdkD8).exists())
+            sdkD8 = new File(sdkRoot, "nope").getAbsolutePath()
+        mindustryExecutable = getMindustryFile()
+        mindustryServerExecutable = getMindustryServerFile()
+        //can't assign type
+        androidJarFile = new File(sdkJar)
+        //imagine writing json
+        modhjson = ""
+        modhjson += 'name: "' + modsNname + '"\n'
+        modhjson += 'displayName: "' + modsNdisplayName + '"\n'
+        modhjson += 'description: "' + modsNdescription + '"\n'
+        modhjson += 'author: "' + modsNauthor + '"\n'
+        modhjson += 'main: "' + modsNmain + '"\n'
+        modhjson += 'minGameVersion: ' + modsNminMindustryVersion + '\n'
+        modhjson += "version: " + modsNversion + "\n"
+        modhjson += 'hidden: ' + modsNsupportVanillaServer + '\n'
+        if (project.hasProperty("githubRepo"))//supplied by workflow runner (gradle.yml)  -PgithubRepo="$GITHUB_REPOSITORY"
+            modhjson += 'repo: \"' + githubRepo + '\" \n'
+        else
+            modhjson += 'repo: "' + modsNrepo + '"\n'
+
+
+    }
+//force arc version
+    configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'com.github.Anuken.Arc') {
+                details.useVersion "$mindustryHash"
+            }
+
+        }
+    }
+
+    //From Root to every project
+    dependencies {
+        def be = System.getProperty("modsNBE") != null && !System.getProperty("modsNBE").isEmpty()
+        if (be) downloadMindustry(getMindustryURL(), mindustryExecutable)
+        if (be && mindustryExecutable.exists()) {
+            compileOnly(files(mindustryExecutable))
+            //testCompileOnly(files(mindustry))
+            testImplementation(files(mindustryExecutable))
+        }
+
+
+        compileOnly("com.github.Anuken.Arc:arc-core:$arcHash") {
+            because("provided")
+        }
+        compileOnly("com.github.Anuken.Arc:backend-sdl:$arcHash") {
+            because("provided")
+        }
+        compileOnly("com.github.Anuken.MindustryJitpack:core:$mindustryHash") {
+            because("provided")
+        }
+    }
+
+}
+
+ext {
+    //rewrite mod.hjson everytime gradle rollin
+    try {
+        File f = new File(projectDir, "mod.hjson")
+        f.delete()
+        Files.write(f.toPath(), modhjson.toString().getBytes(), StandardOpenOption.WRITE, StandardOpenOption.CREATE)
+    } catch (ignored) {
+    }
+
+}
+//Root Module only
+dependencies {
+    if (!OS.isWindows) annotationProcessor "com.github.Anuken:jabel:$jabelVersion"//this thing crash in Windows
+    if (androidJarFile.exists())
+        compileOnly(files(androidJarFile))
+}
+//not every module use java 8
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+    options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+    options.compilerArgs.addAll(['--release', '8'])//android like java 8
+}
+//make .class jar with executable main and MANIFEST.MF
+//your typical jar
+task base(type: Jar) {
+    archiveFileName = modsNname + ".jar"//Example-Mods,jar
+    duplicatesStrategy(DuplicatesStrategy.EXCLUDE)//stop including duplicated copy of library, D8 really mad
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+//Runtime library only, compile library like arc won't get included
+    }
+    with jar//what is this
+    manifest {
+        attributes 'Main-Class': modsNJavaMain//what
+    }
+
+
+    from(rootDir) {
+        include "mod.hjson"//assuming the rootdir is actually current folder
+        include "icon.png"
+    }
+}
+//source code documentation instead of decompiled .class, if you use jitpack that is
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'//deprecated
+    from sourceSets.main.allSource
+}
+//not jar task
+//just handle making dexed jar after making typical jar
+task baseJar {
+    dependsOn 'base'//typical jar
+    //collect dependencies needed for desugaring
+    if (new File(sdkD8).exists()) {
+        def files = (configurations.compileClasspath.asList() + configurations.runtimeClasspath.asList() + [new File(sdkJar)])
+//all dependency go
+        def dependencies = files.collect { "--classpath $it.path" }.join(" ")//argument builder
+        def cmd = "${sdkD8} $dependencies --min-api ${minAndroidApi} --output Dex.jar ${modsNname}.jar"
+//should output Dex.jar from Example-Mods.jar
+        def dir = new File(projectDir, "build/libs/")
+        dir.mkdirs()//cuz sike, file not found exception
+        doLast {
+            if (new File(sdkD8).exists() && new File(sdkJar).exists()) {
+                println(cmd)//comment this to disable spam
+                Runtime.getRuntime().exec(cmd, new String[0], dir).waitForProcessOutput(System.out, System.err)
+            }
+        }
+    } else {
+        println "No sdkD8 detected on ANDROID_HOME, skipping desugaring"//y not
+    }
+}
+
+
+//here we combine typical jar and dex jar to make
+//typical-dex.jar
+//if android sdk exist
+task makeJar(type: Jar) {
+    dependsOn baseJar//dex jar
+    if (new File(sdkD8).exists()) {//some people don't have android SDK
+        archiveFileName = modsNname + "-Dexed.jar"
+
+        duplicatesStrategy(DuplicatesStrategy.EXCLUDE)
+        if (new File(sdkD8).exists()) {
+            from() {
+                zipTree(new File(projectDir, "build/libs/Dex.jar"))//include Dex.jar
+            }
+        }
+    } else {
+        println "No sdkD8 detected on ANDROID_HOME, skipping making Combined Dex-Class Jar"
+    }
+    from() {
+        zipTree(new File(projectDir, "build/libs/${modsNname}.jar"))//include YourModsName.jar or typical.jar
+    }
+}
+//TODO add more dependsOn
+//if you have multiple version of mods
+task deploy(type: Jar) {
+    dependsOn makeJar
+}
+
+
+//h
+//add progress bar
+static void downloadMindustry(URL url, File download) {
+    download.getParentFile().mkdirs()
+    if (download.exists()) return
+    System.out.println("Downloading: " + url.toString())
+
+    HttpURLConnection con = (HttpURLConnection) url.openConnection()
+    BufferedInputStream input = new BufferedInputStream(con.getInputStream())
+    download.getAbsoluteFile().getParentFile().mkdirs()
+    RandomAccessFile output = new RandomAccessFile(download, "rw")
+
+    int bytesRead
+    byte[] buffer = new byte[4096]
+    long nextLog = System.currentTimeMillis() + 4000
+    long readed = 0
+    while ((bytesRead = input.read(buffer)) != -1) {
+        readed += bytesRead
+        output.write(buffer, 0, bytesRead)
+        if (System.currentTimeMillis() > nextLog) {
+            System.out.println(readed / 1_000_000)
+            nextLog = System.currentTimeMillis() + 4000
+        }
+    }
+    output.close()
+
+}
+//don't crash
+static void copyToMindustry(File f) {
+    File target = new File(OS.getAppDataDirectoryString("Mindustry"))
+    target = new File(target, "mods")
+    target = new File(target, f.getName())
+    target.getParentFile().mkdirs()
+    System.out.println("Copying: " + f.getAbsolutePath() + " to " + target.getAbsolutePath())
+    Files.copy(f.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+}
+
+static URL getMindustryServerURL() {
+    if (System.getProperty("modsNBE", null) != null) {
+        String h = System.getProperty("modsNBE")
+        return new URL("https://github.com/Anuken/MindustryBuilds/releases/download/" + h + "/Mindustry-BE-Server-" + h + ".jar")
+    }
+    return new URL("https://github.com/Anuken/Mindustry/releases/download/" + System.getProperty("mindustryHash") + "/server-release.jar")
+}
+
+static File getMindustryServerFile() {
+    URL u = getMindustryServerURL()
+    File mindustry = new File(new File(new File(OS.getAppDataDirectoryString("Mindustry")), "build/cache/"), u.getFile())
+    return mindustry.getAbsoluteFile()
+}
+
+static URL getMindustryURL() {
+    if (System.getProperty("modsNBE", null) != null) {
+        String h = System.getProperty("modsNBE")
+        return new URL("https://github.com/Anuken/MindustryBuilds/releases/download/" + h + "/Mindustry-BE-Desktop-" + h + ".jar")
+    }
+    return new URL("https://github.com/Anuken/Mindustry/releases/download/" + System.getProperty("mindustryHash") + "/Mindustry.jar")
+}
+
+static File getMindustryFile() {
+    URL u = getMindustryURL()
+    File mindustry = new File(new File(new File(OS.getAppDataDirectoryString("Mindustry")), "build/cache/"), u.getFile())
+    return mindustry.getAbsoluteFile()
+}
+
+//how lazy to download this
+task download() {
+    doLast {
+        downloadMindustry(getMindustryServerURL(), getMindustryServerFile())
+        downloadMindustry(getMindustryURL(), getMindustryFile())
+    }
+}
+//don't want open file manager
+task copyMods() {
+    dependsOn 'base'//you don't need dex jar for pc
+    doLast {
+        //client side
+        File srcJar = new File(new File(projectDir.toString()), "build/libs/" + modsNname + ".jar")
+        copyToMindustry(srcJar)
+        //server side
+        File target = new File(projectDir.toString(), "config/mods/" + modsNname + ".jar")
+        target.getParentFile().mkdirs()
+        System.out.println("Copying: " + srcJar.getAbsolutePath() + " to " + target.getAbsolutePath())
+        Files.copy(srcJar.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
+//java -jar Mindustry.jar
+//cooler java -jar Mindustry.jar
+task runClient(type: JavaExec) {
+    dependsOn download
+    dependsOn copyMods//make class jar then copy it, why the hell you need to dex it
+    File mindustry = getMindustryFile()
+    println(mindustry.getAbsolutePath())
+    classpath = files(mindustry.getAbsolutePath())
+    //classpath += sourceSets.main.runtimeClasspath//will append classpath to java
+    main = "mindustry.desktop.DesktopLauncher"
+}
+
+task runServer(type: JavaExec) {
+    dependsOn download
+    dependsOn copyMods//make class jar then copy it, why the hell you need to dex it
+    File mindustry = getMindustryServerFile()
+    println(mindustry.getAbsolutePath())
+    classpath = files(mindustry.getAbsolutePath())
+    //classpath += sourceSets.main.runtimeClasspath//will append classpath to java
+    args = ["host", "Ancient_Caldera", "sandbox"]
+    main = "mindustry.server.ServerLauncher"
+}
+
+task runCleanup {
+    doLast {
+        //delete copyMods
+        //server side
+        File server = new File(projectDir.toString(), "config/mods/" + modsNname + ".jar")
+        server.delete()
+
+        //client side
+        File srcJar = new File(new File(projectDir.toString()), "build/libs/" + modsNname + ".jar")
+        //srcJar.delete()
+        File client = new File(OS.getAppDataDirectoryString("Mindustry"))
+        client = new File(client, "mods")
+        client = new File(client, srcJar.getName())
+        client.delete()
+        println("Cleanup done")
+
+
+    }
+}
+
+runClient.finalizedBy runCleanup
+runServer.finalizedBy runCleanup
