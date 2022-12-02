@@ -4,22 +4,19 @@ import arc.Core;
 import arc.Events;
 import arc.files.Fi;
 import arc.graphics.*;
-import arc.graphics.g2d.Draw;
-import arc.graphics.g2d.Lines;
 import arc.graphics.gl.FrameBuffer;
 import arc.scene.ui.Dialog;
 import arc.util.Log;
 import arc.util.Time;
-import arc.util.Tmp;
 import mindustry.Vars;
 import mindustry.game.EventType;
 import mindustry.game.Team;
-import mindustry.gen.Bullet;
+import mindustry.gen.Building;
 import mindustry.gen.Groups;
 import mindustry.gen.Icon;
-import mindustry.gen.Unit;
-import mindustry.graphics.Pal;
 import mindustry.mod.Mod;
+import mindustry.world.blocks.logic.CanvasBlock;
+import mindustry.world.blocks.logic.LogicDisplay;
 
 import java.nio.ByteBuffer;
 
@@ -43,61 +40,39 @@ public class Main extends Mod {
 		int h = 224;
 
 		final long[] start = {Time.millis()};
-		Events.run(EventType.Trigger.draw, () -> {
-			if (Time.millis() - start[0] < 1000) return;
-			;
+		Events.run(EventType.Trigger.postDraw, () -> {
+			if (Time.millis() - start[0] < 2000) return;
+
 			start[0] = Time.millis();
 
 			//check if world is loaded and not paused
-			if (Vars.state.isGame() && !Vars.state.isPaused() && Vars.renderer.minimap.getTexture() != null) {
-				Draw.draw(Draw.z(), () -> {
-					if (buffer == null) {
-						buffer = new FrameBuffer(w, h);
-						//clear the buffer - some OSs leave garbage in it
-						buffer.begin(Pal.darkerMetal);
-						buffer.end();
-					}
-				});
-				Draw.draw(Draw.z(), () -> {
-					Tmp.m1.set(Draw.proj());
-					Draw.proj(0, 0, w, h);
-					buffer.begin();
-					Draw.color(color);
-					Lines.stroke(stroke);
-					int centerX = w / 2;
-					int centerY = h / 2;
-					//Draw unit here
-					for (Unit unit : Groups.unit) {
-						//skip if outside range
-						if (unit.dst(Vars.player) > 100) continue;
-						Draw.color(unit.team.color);
-						Draw.rect(unit.icon(), unit.x - centerX, unit.y - centerY);
-					}
-					//Draw bullet
-					for (Bullet bullet : Groups.bullet) {
-						//skip if outside range
-						if (bullet.dst(Vars.player) > 100) continue;
-						Draw.color(bullet.team.color);
-						bullet.draw();
-					}
-					buffer.end();
-					Draw.proj(Tmp.m1);
-					Draw.reset();
-				});
-
-				Draw.draw(Draw.z(), () -> {
-					if (buffer != null) {
-						//copy buffer to pixmap
-						final Pixmap pixmap = new Pixmap(w, h);
+			if (Vars.state.isGame() && !Vars.state.isPaused()) {
+				for (Building b : Groups.build) {
+					Pixmap pixmap = null;
+					int hashCode = 0;
+					if (b instanceof LogicDisplay.LogicDisplayBuild) {
+						//get frame buffer and save to file
+						LogicDisplay.LogicDisplayBuild build = (LogicDisplay.LogicDisplayBuild) b;
+						if (build.buffer == null) continue;
+						pixmap = new Pixmap(build.buffer.getWidth(), build.buffer.getHeight());
 						final ByteBuffer buf = pixmap.getPixels();
-						buffer.getTexture().bind();
-						Core.gl.glReadPixels(0, 0, w, h, GL20.GL_RGBA, GL20.GL_UNSIGNED_BYTE, buf);
-						//save pixmap to file
-						PixmapIO.writePng(crop, pixmap);
+						build.buffer.begin();
+						Core.gl.glReadPixels(0, 0, build.buffer.getWidth(), build.buffer.getHeight(), GL20.GL_RGBA, GL20.GL_UNSIGNED_BYTE, buf);
+						build.buffer.end();
+						hashCode = build.hashCode();
+					}
+					if (b instanceof CanvasBlock.CanvasBuild) {
+						//get frame buffer and save to file
+						CanvasBlock.CanvasBuild build = (CanvasBlock.CanvasBuild) b;
+						pixmap = build.makePixmap();
+						hashCode = build.hashCode();
+					}
+					if (pixmap != null) {
+						Fi file = epicFolder.child("epic-" + hashCode + ".png");
+						PixmapIO.writePng(file, pixmap);
 						pixmap.dispose();
 					}
-				});
-
+				}
 			}
 		});
 		//do you like lambda ?
