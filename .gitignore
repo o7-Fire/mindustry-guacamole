@@ -3,7 +3,7 @@
 
 # Log file
 *.log
-
+epic/
 # BlueJ files
 *.ctxt
 

@@ -137,6 +137,9 @@ allprojects {
         compileOnly("com.github.Anuken.MindustryJitpack:core:$mindustryHash") {
             because("provided")
         }
+        implementation group: 'org.apache.httpcomponents.client5', name: 'httpclient5', version: '5.2.1'
+        implementation group: 'com.google.code.gson', name: 'gson', version: '2.10'
+
     }
 
 

@@ -6,19 +6,23 @@ import arc.files.Fi;
 import arc.graphics.*;
 import arc.graphics.gl.FrameBuffer;
 import arc.scene.ui.Dialog;
+import arc.struct.Seq;
 import arc.util.Log;
+import arc.util.Reflect;
 import arc.util.Time;
 import mindustry.Vars;
 import mindustry.game.EventType;
 import mindustry.game.Team;
 import mindustry.gen.Building;
-import mindustry.gen.Groups;
 import mindustry.gen.Icon;
+import mindustry.graphics.BlockRenderer;
 import mindustry.mod.Mod;
+import mindustry.world.Tile;
 import mindustry.world.blocks.logic.CanvasBlock;
 import mindustry.world.blocks.logic.LogicDisplay;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 
 public class Main extends Mod {
 	boolean stat;
@@ -27,7 +31,7 @@ public class Main extends Mod {
 	public static float color = Color.whiteFloatBits;
 	public static float stroke = 1f;
 	public static Fi epicFolder = null;
-
+	public static Seq<Tile> tileview = null;
 	@Override
 	public void init() {
 		Log.infoTag("Example-Mods", "Hello World!");
@@ -38,7 +42,7 @@ public class Main extends Mod {
 		if (Vars.ui == null) return;
 		int w = 224;
 		int h = 224;
-
+		tileview = Reflect.get(BlockRenderer.class, Vars.renderer.blocks, "tileview");
 		final long[] start = {Time.millis()};
 		Events.run(EventType.Trigger.postDraw, () -> {
 			if (Time.millis() - start[0] < 2000) return;
@@ -47,9 +51,15 @@ public class Main extends Mod {
 
 			//check if world is loaded and not paused
 			if (Vars.state.isGame() && !Vars.state.isPaused()) {
-				for (Building b : Groups.build) {
+				Seq<Tile> seq = new Seq<>(tileview);
+				while (seq.size > 0) {
+					Tile tile = seq.pop();
+					Building b = tile.build;
+					if (b == null) continue;
+					if (b.block == null) continue;
 					Pixmap pixmap = null;
-					int hashCode = 0;
+					String hashCode = "null";
+
 					if (b instanceof LogicDisplay.LogicDisplayBuild) {
 						//get frame buffer and save to file
 						LogicDisplay.LogicDisplayBuild build = (LogicDisplay.LogicDisplayBuild) b;
@@ -59,13 +69,83 @@ public class Main extends Mod {
 						build.buffer.begin();
 						Core.gl.glReadPixels(0, 0, build.buffer.getWidth(), build.buffer.getHeight(), GL20.GL_RGBA, GL20.GL_UNSIGNED_BYTE, buf);
 						build.buffer.end();
-						hashCode = build.hashCode();
+						hashCode =
+								build.tileX() + "-" + build.tileY() + "-LogicDisplay" + "(" + build.block.size + "x" +
+										build.block.size + ")";
+
 					}
+
 					if (b instanceof CanvasBlock.CanvasBuild) {
 						//get frame buffer and save to file
 						CanvasBlock.CanvasBuild build = (CanvasBlock.CanvasBuild) b;
-						pixmap = build.makePixmap();
-						hashCode = build.hashCode();
+						CanvasBlock block = (CanvasBlock) build.block;
+						//check for rectangular groups of canvas blocks
+						ArrayList<Tile> tiles = new ArrayList<>();
+						tiles.add(build.tile);
+						boolean exhausted = false;
+						while (!exhausted) {
+							exhausted = true;
+							for (int i = 0; i < tiles.size(); i++) {
+								Tile t = tiles.get(i);
+								for (int x = -1; x <= 1; x++) {
+									for (int y = -1; y <= 1; y++) {
+										if (x == 0 && y == 0) continue;
+										Tile tile1 = t.nearby(x, y);
+										if (tile1 == null) continue;
+										if (tile1.build == null) continue;
+										if (tile1.build instanceof CanvasBlock.CanvasBuild) {
+											CanvasBlock.CanvasBuild build1 = (CanvasBlock.CanvasBuild) tile1.build;
+											if (build1.team == build.team) {
+												if (!tiles.contains(tile1)) {
+													tiles.add(tile1);
+													exhausted = false;
+													if (seq.contains(tile1)) seq.remove(tile1);
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						//get the smallest and largest x and y values
+						int minX = Integer.MAX_VALUE;
+						int minY = Integer.MAX_VALUE;
+						int maxX = Integer.MIN_VALUE;
+						int maxY = Integer.MIN_VALUE;
+						for (Tile t : tiles) {
+							if (t.x < minX) minX = t.x;
+							if (t.y < minY) minY = t.y;
+							if (t.x > maxX) maxX = t.x;
+							if (t.y > maxY) maxY = t.y;
+						}
+						//get the width and height of the canvas
+						int canvasSize = block.canvasSize;
+						int width = (maxX - minX + 1) * canvasSize;
+						int height = (maxY - minY + 1) * canvasSize;
+						hashCode = build.tileX() + "-" + build.tileY() + "-Canvas" + "(" + width + "x" + height + ")";
+						//merge all canvases into one
+						pixmap = new Pixmap(width, height);
+						//Use building
+						ArrayList<CanvasBlock.CanvasBuild> builds = new ArrayList<>();
+						for (Tile t : tiles) {
+							builds.add((CanvasBlock.CanvasBuild) t.build);
+						}
+						for (Building bb : builds) {
+							Tile t = bb.tile;
+							CanvasBlock.CanvasBuild build1 = (CanvasBlock.CanvasBuild) t.build;
+							int x = (t.x - minX) * canvasSize;
+							int y = (t.y - minY) * canvasSize;
+							//TODO optimize this
+							Pixmap pixmap1 = build1.makePixmap();
+							for (int i = 0; i < canvasSize; i++) {
+								for (int j = 0; j < canvasSize; j++) {
+									int color = pixmap1.get(i, j);
+									pixmap.set(x + i, y + j, color);
+								}
+							}
+							pixmap1.dispose();
+						}
+
 					}
 					if (pixmap != null) {
 						Fi file = epicFolder.child("epic-" + hashCode + ".png");
