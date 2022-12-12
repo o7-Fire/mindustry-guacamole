@@ -1,5 +1,6 @@
 package Premain;
 
+import Atom.Utility.Pool;
 import arc.Core;
 import arc.Events;
 import arc.files.Fi;
@@ -43,6 +44,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 public class Main extends Mod {
 	boolean stat;
@@ -55,6 +57,7 @@ public class Main extends Mod {
 	public static CloseableHttpClient client = org.apache.hc.client5.http.impl.classic.HttpClients.createDefault();
 	public static Gson gson = new Gson();
 	public static HashMap<Building, Runnable> draw = new HashMap<>();
+
 
 	@Override
 	public void init() {
@@ -181,68 +184,80 @@ public class Main extends Mod {
 
 					}
 
-					Classification classification = null;
-					if (pixmap != null) {
-						Fi file = epicFolder.child("epic-" + hashCode + ".png");
+					//IO Intensive, Move to other thread
+					Pixmap finalPixmap = pixmap;
+					String finalHashCode = hashCode;
+					Pool.submit(()->{
+						Classification classification = null;
+						if (finalPixmap != null) {
+							Fi file = epicFolder.child("epic-" + finalHashCode + ".png");
 
-						try {
-							PixmapIO.PngWriter writer = new PixmapIO.PngWriter((int) (pixmap.width * pixmap.height *
-									1.5f)); // Guess at deflated size.
-							Closeable in = null;
-							ByteArrayOutputStream out = null;
 							try {
-								writer.setFlipY(false);
+								PixmapIO.PngWriter writer = new PixmapIO.PngWriter((int) (finalPixmap.width * finalPixmap.height *
+										1.5f)); // Guess at deflated size.
+								Closeable in = null;
+								ByteArrayOutputStream out = null;
+								try {
+									writer.setFlipY(false);
 
-								out = new ByteArrayOutputStream();
-								writer.write(out, pixmap);
-								byte[] bytes = out.toByteArray();
+									out = new ByteArrayOutputStream();
+									writer.write(out, finalPixmap);
+									byte[] bytes = out.toByteArray();
 
-								//multipart/form-data
-								//Content-Disposition: form-data; name="file"; filename="epic.png"
-								HttpPost post = new HttpPost("http://localhost:5656/api/v3/classification");
-								MultipartEntityBuilder builder = MultipartEntityBuilder.create();
-								builder.addBinaryBody("file", bytes, ContentType.create("image/png"), "epic.png");
-								HttpEntity entity = builder.build();
-								post.setEntity(entity);
-								CloseableHttpResponse response = client.execute(post);
-								String json = EntityUtils.toString(response.getEntity());
-								classification = gson.fromJson(json, Classification.class);
-								writer.write(file, pixmap);
-							} catch (Exception e) {
+									//multipart/form-data
+									//Content-Disposition: form-data; name="file"; filename="epic.png"
+									HttpPost post = new HttpPost("http://localhost:5656/api/v3/classification");
+									MultipartEntityBuilder builder = MultipartEntityBuilder.create();
+									builder.addBinaryBody("file", bytes, ContentType.create("image/png"), "epic.png");
+									HttpEntity entity = builder.build();
+									post.setEntity(entity);
+									CloseableHttpResponse response = client.execute(post);
+									String json = EntityUtils.toString(response.getEntity());
+									classification = gson.fromJson(json, Classification.class);
+									writer.write(file, finalPixmap);
+								} catch (Exception e) {
 
+								} finally {
+									writer.dispose();
+									if (in != null) in.close();
+									if (out != null) out.close();
+
+								}
+							} catch (IOException ex) {
+								//throw new ArcRuntimeException("Error writing PNG: " + file, ex);
 							} finally {
-								writer.dispose();
-								if (in != null) in.close();
-								if (out != null) out.close();
+								//send to GL Thread
+								Core.app.post(finalPixmap::dispose);
 
 							}
-						} catch (IOException ex) {
-							//throw new ArcRuntimeException("Error writing PNG: " + file, ex);
-						} finally {
-							pixmap.dispose();
+
 						}
+						if (classification != null) {
+							classification.sort();
+							Classification finalClassification = classification;
+							Core.app.post(()->{//prevent concurrent modification
+								draw.put(tile.build, () -> {
+									Draw.draw(Layer.overlayUI, () -> {
+										Draw.color(Color.white);
+										float offset = 0;
 
-					}
-					if (classification != null) {
-						classification.sort();
-						Classification finalClassification = classification;
-						draw.put(tile.build, () -> {
-							Draw.draw(Layer.overlayUI, () -> {
-								Draw.color(Color.white);
-								float offset = 0;
-								float scale = Fonts.outline.getData().scaleX;
-								for (Map.Entry<String, Double> s : finalClassification.data.get(0).data.get(0)
-										.entrySet()) {
-									Fonts.outline.getData().setScale((Scl.scl(0.5f)));
-									Fonts.outline.draw(
-											s.getKey() + ": " + s.getValue(), tile.drawx(), tile.drawy() + offset);
-									offset += Fonts.outline.getData().lineHeight;
-								}
-								Fonts.outline.getData().setScale(scale);
+										float scale = Fonts.outline.getData().scaleX;
+										for (Map.Entry<String, Double> s : finalClassification.data.get(0).data.get(0)
+												.entrySet()) {
+											Fonts.outline.getData().setScale(Scl.scl(0.25f));
+
+											String value = ((int)(s.getValue() * 100)) + "%";
+
+											Fonts.outline.draw(s.getKey() + ": " + value, tile.drawx(), tile.drawy() + offset);
+											offset += Fonts.outline.getData().lineHeight * 1.1f;
+										}
+										Fonts.outline.getData().setScale(scale);
+									});
+								});
 							});
-						});
+						}
+					});
 
-					}
 				}
 			}
 		});

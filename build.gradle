@@ -56,9 +56,27 @@ allprojects {
         maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
         maven { url "https://oss.sonatype.org/content/repositories/releases/" }
         maven { url 'https://jitpack.io' }
+
     }
 
     ext {
+        atomModule = { String module ->
+            boolean b = new File(rootDir, '../Atom').exists()
+            //b = false
+            if (b) {
+                return project(":Atom" + module)
+            } else {
+                return "com.github.o7-Fire.Atomic-Library$module:$atomHash"
+            }
+        }
+        aproj = { String module ->
+            if (findProject(module) != null) {
+                return project(module)
+            } else {
+                return project(":" + modsNname + module)
+            }
+        }
+
         try {
             System.properties.load(new FileReader("gradle.properties"))
             System.properties.load(new FileReader("local.properties"))
@@ -139,7 +157,9 @@ allprojects {
         }
         implementation group: 'org.apache.httpcomponents.client5', name: 'httpclient5', version: '5.2.1'
         implementation group: 'com.google.code.gson', name: 'gson', version: '2.10'
-
+        implementation("com.github.o7-Fire:Atomic-Library:$atomHash") {
+            because("provided")
+        }
     }
 
 
