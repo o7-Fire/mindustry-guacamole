@@ -23,6 +23,7 @@ import mindustry.world.blocks.logic.LogicDisplay;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashSet;
 
 public class Main extends Mod {
 	boolean stat;
@@ -126,7 +127,7 @@ public class Main extends Mod {
 						//merge all canvases into one
 						pixmap = new Pixmap(width, height);
 						//Use building
-						ArrayList<CanvasBlock.CanvasBuild> builds = new ArrayList<>();
+						HashSet<CanvasBlock.CanvasBuild> builds = new HashSet<>();
 						for (Tile t : tiles) {
 							builds.add((CanvasBlock.CanvasBuild) t.build);
 						}
