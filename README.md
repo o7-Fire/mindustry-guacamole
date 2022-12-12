@@ -5,4 +5,4 @@
 
 ## This project is somehow related with
 
-- https://github.com/o7-Fire/NodeNsfwJSAP
+- https://github.com/o7-Fire/NodeNsfwJSAPI
