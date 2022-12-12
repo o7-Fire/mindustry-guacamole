@@ -81,67 +81,59 @@ public class Main extends Mod {
 						CanvasBlock.CanvasBuild build = (CanvasBlock.CanvasBuild) b;
 						CanvasBlock block = (CanvasBlock) build.block;
 						//check for rectangular groups of canvas blocks
+						HashSet<Building> buildings = new HashSet<>();
+						buildings.add(build);
 						ArrayList<Tile> tiles = new ArrayList<>();
 						tiles.add(build.tile);
-						boolean exhausted = false;
-						while (!exhausted) {
-							exhausted = true;
-							for (int i = 0; i < tiles.size(); i++) {
-								Tile t = tiles.get(i);
-								for (int x = -1; x <= 1; x++) {
-									for (int y = -1; y <= 1; y++) {
-										if (x == 0 && y == 0) continue;
-										Tile tile1 = t.nearby(x, y);
-										if (tile1 == null) continue;
-										if (tile1.build == null) continue;
-										if (tile1.build instanceof CanvasBlock.CanvasBuild) {
-											CanvasBlock.CanvasBuild build1 = (CanvasBlock.CanvasBuild) tile1.build;
-											if (build1.team == build.team) {
-												if (!tiles.contains(tile1)) {
-													tiles.add(tile1);
-													exhausted = false;
-													if (seq.contains(tile1)) seq.remove(tile1);
-												}
-											}
-										}
-									}
+						HashSet<Tile> visited = new HashSet<>();
+						while (!tiles.isEmpty()) {
+							Tile t = tiles.remove(0);
+							for (int i = 0; i < 4; i++) {
+								Tile n = t.nearby(i);
+								if (n == null) continue;
+								Building nb = n.build;
+								if (nb == null) continue;
+								if (nb.block instanceof CanvasBlock && visited.add(n)) {
+									buildings.add(nb);
+									tiles.add(n);
+									seq.remove(n);
 								}
 							}
 						}
-						//get the smallest and largest x and y values
-						int minX = Integer.MAX_VALUE;
-						int minY = Integer.MAX_VALUE;
-						int maxX = Integer.MIN_VALUE;
-						int maxY = Integer.MIN_VALUE;
-						for (Tile t : tiles) {
-							if (t.x < minX) minX = t.x;
-							if (t.y < minY) minY = t.y;
-							if (t.x > maxX) maxX = t.x;
-							if (t.y > maxY) maxY = t.y;
+						//get the smallest rectangle that contains all canvas blocks
+						int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+						for (Building b2 : buildings) {
+							minX = Math.min(minX, b2.tileX());
+							minY = Math.min(minY, b2.tileY());
+							maxX = Math.max(maxX, b2.tileX() + b2.block.size);
+							maxY = Math.max(maxY, b2.tileY() + b2.block.size);
 						}
 						//get the width and height of the canvas
 						int canvasSize = block.canvasSize;
-						int width = (maxX - minX + 1) * canvasSize;
-						int height = (maxY - minY + 1) * canvasSize;
+						int width = ((maxX - minX) / block.size) * canvasSize;
+						int height = ((maxY - minY) / block.size) * canvasSize;
 						hashCode = build.tileX() + "-" + build.tileY() + "-Canvas" + "(" + width + "x" + height + ")";
 						//merge all canvases into one
 						pixmap = new Pixmap(width, height);
 						//Use building
-						HashSet<CanvasBlock.CanvasBuild> builds = new HashSet<>();
-						for (Tile t : tiles) {
-							builds.add((CanvasBlock.CanvasBuild) t.build);
-						}
-						for (Building bb : builds) {
+						boolean flipY = false;
+						for (Building bb : buildings) {
 							Tile t = bb.tile;
 							CanvasBlock.CanvasBuild build1 = (CanvasBlock.CanvasBuild) t.build;
-							int x = (t.x - minX) * canvasSize;
-							int y = (t.y - minY) * canvasSize;
+							int x = ((build1.tileX() - minX) / block.size) * canvasSize;
+							int y = ((build1.tileY() - minY) / block.size) * canvasSize;
 							//TODO optimize this
 							Pixmap pixmap1 = build1.makePixmap();
 							for (int i = 0; i < canvasSize; i++) {
 								for (int j = 0; j < canvasSize; j++) {
 									int color = pixmap1.get(i, j);
-									pixmap.set(x + i, y + j, color);
+									if (color != 0) {
+										if (flipY) {
+											pixmap.set(x + i, height - y - j - 1, color);
+										} else {
+											pixmap.set(x + i, y + j, color);
+										}
+									}
 								}
 							}
 							pixmap1.dispose();
