@@ -56,7 +56,7 @@ public class Classification implements Serializable {
     public String errorCode;
     public String message;
     @SerializedName("data")
-    public List<Data> data;
+    public List<Data> data;//multiple images ?
 
     public void sort() {
         for (Data d : data) {
@@ -66,7 +66,7 @@ public class Classification implements Serializable {
 
     public static class Data implements Serializable {
         @SerializedName("data")
-        public List<Map<String, Double>> data;
+        public List<Map<String, Double>> data;//multiple frames ?
         @SerializedName("model")
         private Model model;
         private long timestamp;
