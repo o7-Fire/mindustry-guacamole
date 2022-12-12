@@ -116,7 +116,8 @@ public class Main extends Mod {
 						//merge all canvases into one
 						pixmap = new Pixmap(width, height);
 						//Use building
-						boolean flipY = false;
+						boolean flipY = true;//wtf ?!?!?!?
+						boolean flipX = false;
 						for (Building bb : buildings) {
 							Tile t = bb.tile;
 							CanvasBlock.CanvasBuild build1 = (CanvasBlock.CanvasBuild) t.build;
@@ -128,11 +129,9 @@ public class Main extends Mod {
 								for (int j = 0; j < canvasSize; j++) {
 									int color = pixmap1.get(i, j);
 									if (color != 0) {
-										if (flipY) {
-											pixmap.set(x + i, height - y - j - 1, color);
-										} else {
-											pixmap.set(x + i, y + j, color);
-										}
+										int x1 = x + (flipX ? canvasSize - i - 1 : i);
+										int y1 = y + (flipY ? canvasSize - j - 1 : j);
+										pixmap.set(x1, y1, color);
 									}
 								}
 							}
