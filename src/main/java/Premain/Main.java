@@ -4,26 +4,45 @@ import arc.Core;
 import arc.Events;
 import arc.files.Fi;
 import arc.graphics.*;
+import arc.graphics.g2d.Draw;
 import arc.graphics.gl.FrameBuffer;
 import arc.scene.ui.Dialog;
+import arc.scene.ui.layout.Scl;
 import arc.struct.Seq;
 import arc.util.Log;
 import arc.util.Reflect;
 import arc.util.Time;
+import com.google.gson.Gson;
 import mindustry.Vars;
 import mindustry.game.EventType;
 import mindustry.game.Team;
 import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.graphics.BlockRenderer;
+import mindustry.graphics.Layer;
 import mindustry.mod.Mod;
+import mindustry.ui.Fonts;
 import mindustry.world.Tile;
 import mindustry.world.blocks.logic.CanvasBlock;
 import mindustry.world.blocks.logic.LogicDisplay;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.entity.mime.MultipartEntityBuilder;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.ParseException;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
 
+import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 
 public class Main extends Mod {
 	boolean stat;
@@ -33,6 +52,10 @@ public class Main extends Mod {
 	public static float stroke = 1f;
 	public static Fi epicFolder = null;
 	public static Seq<Tile> tileview = null;
+	public static CloseableHttpClient client = org.apache.hc.client5.http.impl.classic.HttpClients.createDefault();
+	public static Gson gson = new Gson();
+	public static HashMap<Building, Runnable> draw = new HashMap<>();
+
 	@Override
 	public void init() {
 		Log.infoTag("Example-Mods", "Hello World!");
@@ -40,16 +63,31 @@ public class Main extends Mod {
 		if (!epicFolder.exists()) {
 			epicFolder.mkdirs();
 		}
+		//test HttpClient
+		HttpGet httpGet = new HttpGet("http://localhost:5656/api/v3/health");
+		try {
+			CloseableHttpResponse response = client.execute(httpGet);
+			HttpEntity entity = response.getEntity();
+			String result = EntityUtils.toString(entity);
+			Log.info(result);
+		} catch (IOException | ParseException e) {
+			e.printStackTrace();
+		}
 		if (Vars.ui == null) return;
 		int w = 224;
 		int h = 224;
 		tileview = Reflect.get(BlockRenderer.class, Vars.renderer.blocks, "tileview");
 		final long[] start = {Time.millis()};
+
+		Events.run(EventType.Trigger.draw, () -> {
+			for (Runnable r : new ArrayList<>(draw.values())) {
+				r.run();
+			}
+		});
 		Events.run(EventType.Trigger.postDraw, () -> {
 			if (Time.millis() - start[0] < 2000) return;
-
 			start[0] = Time.millis();
-
+			draw.clear();
 			//check if world is loaded and not paused
 			if (Vars.state.isGame() && !Vars.state.isPaused()) {
 				Seq<Tile> seq = new Seq<>(tileview);
@@ -81,11 +119,11 @@ public class Main extends Mod {
 						CanvasBlock.CanvasBuild build = (CanvasBlock.CanvasBuild) b;
 						CanvasBlock block = (CanvasBlock) build.block;
 						//check for rectangular groups of canvas blocks
-						HashSet<Building> buildings = new HashSet<>();
+						HashSet<Building> buildings = new HashSet<>();//set of buildings to check
 						buildings.add(build);
-						ArrayList<Tile> tiles = new ArrayList<>();
+						ArrayList<Tile> tiles = new ArrayList<>();//about to visit
 						tiles.add(build.tile);
-						HashSet<Tile> visited = new HashSet<>();
+						HashSet<Tile> visited = new HashSet<>();//already visited
 						while (!tiles.isEmpty()) {
 							Tile t = tiles.remove(0);
 							for (int i = 0; i < 4; i++) {
@@ -137,12 +175,73 @@ public class Main extends Mod {
 							}
 							pixmap1.dispose();
 						}
+						Pixmap flipped = pixmap.flipY();
+						pixmap.dispose();
+						pixmap = flipped;
 
 					}
+
+					Classification classification = null;
 					if (pixmap != null) {
 						Fi file = epicFolder.child("epic-" + hashCode + ".png");
-						PixmapIO.writePng(file, pixmap);
-						pixmap.dispose();
+
+						try {
+							PixmapIO.PngWriter writer = new PixmapIO.PngWriter((int) (pixmap.width * pixmap.height *
+									1.5f)); // Guess at deflated size.
+							Closeable in = null;
+							ByteArrayOutputStream out = null;
+							try {
+								writer.setFlipY(false);
+
+								out = new ByteArrayOutputStream();
+								writer.write(out, pixmap);
+								byte[] bytes = out.toByteArray();
+
+								//multipart/form-data
+								//Content-Disposition: form-data; name="file"; filename="epic.png"
+								HttpPost post = new HttpPost("http://localhost:5656/api/v3/classification");
+								MultipartEntityBuilder builder = MultipartEntityBuilder.create();
+								builder.addBinaryBody("file", bytes, ContentType.create("image/png"), "epic.png");
+								HttpEntity entity = builder.build();
+								post.setEntity(entity);
+								CloseableHttpResponse response = client.execute(post);
+								String json = EntityUtils.toString(response.getEntity());
+								classification = gson.fromJson(json, Classification.class);
+								writer.write(file, pixmap);
+							} catch (Exception e) {
+
+							} finally {
+								writer.dispose();
+								if (in != null) in.close();
+								if (out != null) out.close();
+
+							}
+						} catch (IOException ex) {
+							//throw new ArcRuntimeException("Error writing PNG: " + file, ex);
+						} finally {
+							pixmap.dispose();
+						}
+
+					}
+					if (classification != null) {
+						classification.sort();
+						Classification finalClassification = classification;
+						draw.put(tile.build, () -> {
+							Draw.draw(Layer.overlayUI, () -> {
+								Draw.color(Color.white);
+								float offset = 0;
+								float scale = Fonts.outline.getData().scaleX;
+								for (Map.Entry<String, Double> s : finalClassification.data.get(0).data.get(0)
+										.entrySet()) {
+									Fonts.outline.getData().setScale((Scl.scl(0.5f)));
+									Fonts.outline.draw(
+											s.getKey() + ": " + s.getValue(), tile.drawx(), tile.drawy() + offset);
+									offset += Fonts.outline.getData().lineHeight;
+								}
+								Fonts.outline.getData().setScale(scale);
+							});
+						});
+
 					}
 				}
 			}
